@@ -117,12 +117,15 @@ def choose_cut(g: Graph, root: str, u: str, c: str, cycle: list[str], reach_befo
     return (u, c), "back_edge"
 
 
+def cycle_pass_cap(g: Graph) -> int:
+    return sum(len(v) for v in g.values()) + 1            # each pass removes one edge
+
+
 def remove_cycles(g: Graph, root: str) -> list[tuple[str, str, int]]:
     """Remove cycle edges from g in place; return them as (parent, child, quantity)."""
     removed = []
     reach_before = reachable(g, root)
-    max_iter = sum(len(v) for v in g.values()) + 1        # each pass removes one edge
-    for _ in range(max_iter):
+    for _ in range(cycle_pass_cap(g)):
         found = find_first_back_edge(g, root)
         if found is None:
             return removed
@@ -257,9 +260,11 @@ def assemble(edges: Graph, master: dict[str, dict[str, str]], service: dict[str,
                 total[c] += total[n] * q
                 count[c] += count[n]
 
-    # 8.6: parents (via a reverse index) and children
+    # 8.6: parents (via a reverse index) and children. Only placed parents count: if the
+    # CRITICAL branch of 8.4 left a cycle among unplaced parts, paths_to must not loop on it.
+    # In every normal build all parts are placed, so nothing is dropped.
     parent_sets: dict[str, set[str]] = {n: set() for n in nodes}
-    for p in nodes:
+    for p in placed:
         for c in g.get(p, {}):
             parent_sets[c].add(p)
     parents = {n: sorted(ps) for n, ps in parent_sets.items()}
