@@ -26,3 +26,9 @@ def make_data(tmp_path: Path, bom_rows=(), master_rows=(), service_rows=()) -> P
     write_csv(tmp_path / "parts_master.csv", MASTER_HEADER, master_rows)
     write_csv(tmp_path / "service_parts.csv", SERVICE_HEADER, service_rows)
     return tmp_path
+
+
+def build(data_dir: Path, root: str):
+    """Build the catalogue from a data directory."""
+    from app.catalogue import build_catalogue
+    return build_catalogue(data_dir, root)
