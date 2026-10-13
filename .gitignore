@@ -23,3 +23,6 @@ Thumbs.db
 contex.md
 rule.md
 decisions.md
+
+# Local synthetic test data and its generator
+data2/

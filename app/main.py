@@ -41,49 +41,26 @@ async def lifespan(app: FastAPI):
     yield
 
 
-DESCRIPTION = """
-Parts catalogue for the **AM-700** bottling machine by Arcadia Machines (root part `AS-40000`).
+def error(description: str, example: str) -> dict:
+    """OpenAPI entry for an error response, with its real message as the example."""
+    return {"model": ErrorResponse, "description": description,
+            "content": {"application/json": {"example": {"detail": example}}}}
 
-The service reconciles three CSV exports (`bom.csv`, `parts_master.csv`, `service_parts.csv`) into
-one catalogue at startup and answers four questions for a field service engineer:
-
-* **What is this part?** `GET /api/parts/{part_number}`
-* **Where does it sit in the machine?** `GET /api/parts/{part_number}/paths`
-* **Can it be replaced on site?** the `status` field
-* **Does it fit this machine's serial number?** `GET /api/serial/{serial}`
-
-Part numbers are matched however they are typed: case, spaces, full-width characters and dash
-look-alikes are ignored, and a separator variant (`FA30019` for `FA-30019`) matches when it is
-unambiguous. Responses always use the BOM spelling.
-
-All answers are precomputed at startup, so every request is a lookup.
-"""
-
-TAGS = [
-    {"name": "System", "description": "Service health."},
-    {"name": "Catalogue", "description": "Whole-catalogue totals."},
-    {"name": "Parts", "description": "Part details and where a part sits in the machine."},
-    {"name": "Serials", "description": "Which ready parts apply to a machine serial number."},
-]
 
 app = FastAPI(
     title="Service Parts Catalogue API",
     version="1.0.0",
-    description=DESCRIPTION,
-    openapi_tags=TAGS,
+    description="Parts catalogue for the AM-700 machine (root `AS-40000`). "
+                "Part numbers match regardless of case, spaces or dash style.",
     lifespan=lifespan,
-    responses={500: {"model": ErrorResponse, "description": "Unexpected internal error (should never happen)."}},
+    responses={500: error("Internal error", "Internal error")},
 )
 
-NOT_FOUND = {404: {"model": ErrorResponse, "description": "The part is not in the machine."}}
+NOT_FOUND = {404: error("Part not in the machine", "Part 'XX-1' is not in the machine")}
 
 PartNumber = Annotated[
     str,
-    PathParam(
-        description="Part number, typed any way: case, spaces and dash look-alikes are ignored. "
-                    "URL-encode `#` as `%23` and `/` as `%2F`.",
-        examples=["FA-30019"],
-    ),
+    PathParam(description="Encode `#` as `%23` and `/` as `%2F`.", examples=["AS-40209"]),
 ]
 
 
@@ -115,58 +92,26 @@ def part_or_404(request: Request, raw: str) -> str:
     return pn
 
 
-@app.get(
-    "/health",
-    response_model=HealthResponse,
-    tags=["System"],
-    summary="Health check",
-    description="Returns `{\"status\": \"ok\"}`. The server accepts requests only after the catalogue is built, "
-                "so any answer means the service is ready.",
-    response_description="The service is up and the catalogue is built.",
-)
+@app.get("/health", response_model=HealthResponse, tags=["System"], summary="Health check")
 def health():
     return {"status": "ok"}
 
 
-@app.get(
-    "/api/validation",
-    response_model=ValidationCounts,
-    tags=["Catalogue"],
-    summary="Catalogue counts",
-    description="Number of parts in the machine and how many are `ready`, `missing` and `not_replaceable`. "
-                "The three status counts always add up to `parts`.",
-    response_description="Part counts by status.",
-)
+@app.get("/api/validation", response_model=ValidationCounts, tags=["Catalogue"], summary="Part counts by status")
 def validation(request: Request):
     return catalogue(request).counts
 
 
 # The paths route must be declared first: {part_number:path} would otherwise swallow "/paths".
-@app.get(
-    "/api/parts/{part_number:path}/paths",
-    response_model=PathsResponse,
-    responses=NOT_FOUND,
-    tags=["Parts"],
-    summary="Where a part sits in the machine",
-    description="Every way down from the root to the part, each path listed from the root to the part. "
-                "Paths are sorted part number by part number from the top, and the list is never truncated.",
-    response_description="All root-to-part paths, sorted.",
-)
+@app.get("/api/parts/{part_number:path}/paths", response_model=PathsResponse, responses=NOT_FOUND,
+         tags=["Parts"], summary="Paths from the root to a part")
 def part_paths(part_number: PartNumber, request: Request):
     pn = part_or_404(request, part_number)
     return {"part_number": pn, "paths": catalogue(request).paths(pn)}
 
 
-@app.get(
-    "/api/parts/{part_number:path}",
-    response_model=PartInfoResponse,
-    responses=NOT_FOUND,
-    tags=["Parts"],
-    summary="What a part is",
-    description="Description and revision (latest revision), service `status`, total quantity in one machine, "
-                "and the part's direct parents and children.",
-    response_description="Details of the part.",
-)
+@app.get("/api/parts/{part_number:path}", response_model=PartInfoResponse, responses=NOT_FOUND,
+         tags=["Parts"], summary="Part details")
 def part_info(part_number: PartNumber, request: Request):
     return catalogue(request).part_info[part_or_404(request, part_number)]
 
@@ -174,16 +119,13 @@ def part_info(part_number: PartNumber, request: Request):
 @app.get(
     "/api/serial/{serial}",
     response_model=SerialApplicableResponse,
-    responses={400: {"model": ErrorResponse, "description": "The serial is not a whole number, or is too long."}},
+    responses={400: error("Not a whole number, or too long", "Serial '2500.5' is not a whole number")},
     tags=["Serials"],
-    summary="Parts that fit a serial number",
-    description="Counts the `ready` parts that apply to a machine with this serial number: parts whose serial "
-                "range includes it (both ends included) and parts with no range. Accepts any whole number, "
-                "including `0`, negatives, `+7` and leading zeros.",
-    response_description="The parsed serial and the number of applicable ready parts.",
+    summary="Ready parts that fit a serial",
+    description="Ready parts whose serial range includes the serial (ends included), plus ready parts with no range.",
 )
 def serial_applicable(
-    serial: Annotated[str, PathParam(description="Machine serial number (a whole number).", examples=["2500"])],
+    serial: Annotated[str, PathParam(description="Whole number.", examples=["2500"])],
     request: Request,
 ):
     s = serial.strip()
