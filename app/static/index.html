@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Service Parts Catalogue</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 860px; margin: 0 auto; padding: 16px; color: #1d2433; background: #f6f7f9; }
+  h1 { font-size: 1.4rem; margin-bottom: 4px; }
+  p.sub { margin-top: 0; color: #5a6475; }
+  section { background: #fff; border: 1px solid #dde1e8; border-radius: 8px; padding: 14px 16px; margin: 14px 0; }
+  h2 { font-size: 1.05rem; margin: 0 0 10px; }
+  form { display: flex; gap: 8px; flex-wrap: wrap; }
+  input { flex: 1; min-width: 180px; padding: 7px 9px; border: 1px solid #c4cad4; border-radius: 6px; font: inherit; }
+  button { padding: 7px 14px; border: 0; border-radius: 6px; background: #2457c5; color: #fff; font: inherit; cursor: pointer; }
+  button:hover { background: #1c469f; }
+  .status { margin: 10px 0 4px; font-weight: 600; }
+  .status.ok { color: #1a7f37; }
+  .status.err { color: #b42318; }
+  pre { margin: 0; padding: 10px; background: #f1f3f6; border-radius: 6px; overflow-x: auto; max-height: 360px; font-size: 0.85rem; }
+  pre:empty, .status:empty { display: none; }
+</style>
+</head>
+<body>
+<h1>Service Parts Catalogue</h1>
+<p class="sub">AM-700 parts lookup. Every answer comes from the running API.</p>
+
+<section>
+  <h2>Validation counts</h2>
+  <form data-url="/api/validation">
+    <button type="submit">Get counts</button>
+  </form>
+  <div class="status"></div><pre></pre>
+</section>
+
+<section>
+  <h2>Part lookup</h2>
+  <form data-url="/api/parts/{}">
+    <input name="value" placeholder="Part number, e.g. FA-30019" required>
+    <button type="submit">Look up</button>
+  </form>
+  <div class="status"></div><pre></pre>
+</section>
+
+<section>
+  <h2>Paths lookup</h2>
+  <form data-url="/api/parts/{}/paths">
+    <input name="value" placeholder="Part number, e.g. FA-30019" required>
+    <button type="submit">Get paths</button>
+  </form>
+  <div class="status"></div><pre></pre>
+</section>
+
+<section>
+  <h2>Serial lookup</h2>
+  <form data-url="/api/serial/{}">
+    <input name="value" placeholder="Serial number, e.g. 2500" required>
+    <button type="submit">Check serial</button>
+  </form>
+  <div class="status"></div><pre></pre>
+</section>
+
+<script>
+  document.querySelectorAll("form").forEach(function (form) {
+    form.addEventListener("submit", async function (event) {
+      event.preventDefault();
+      var section = form.parentElement;
+      var statusEl = section.querySelector(".status");
+      var out = section.querySelector("pre");
+      var input = form.querySelector("input");
+      var url = form.dataset.url.replace("{}", input ? encodeURIComponent(input.value) : "");
+      statusEl.textContent = "Loading...";
+      statusEl.className = "status";
+      out.textContent = "";
+      try {
+        var resp = await fetch(url);
+        var text = await resp.text();
+        var body;
+        try { body = JSON.parse(text); } catch (e) { body = text; }
+        var ok = resp.ok;
+        statusEl.className = "status " + (ok ? "ok" : "err");
+        if (ok) {
+          statusEl.textContent = "HTTP " + resp.status;
+          out.textContent = JSON.stringify(body, null, 2);
+        } else {
+          var detail = body && body.detail !== undefined ? body.detail : body;
+          statusEl.textContent = "HTTP " + resp.status + " - " + (typeof detail === "string" ? detail : JSON.stringify(detail));
+          out.textContent = JSON.stringify(body, null, 2);
+        }
+      } catch (err) {
+        statusEl.className = "status err";
+        statusEl.textContent = "Request failed: " + err;
+      }
+    });
+  });
+</script>
+</body>
+</html>

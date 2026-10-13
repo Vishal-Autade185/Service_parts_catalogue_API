@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from app import config
-from app.loader import load_all, norm_pn
+from app.loader import load_all, loose_key, norm_pn
 from models import ServiceDecision
 
 log = logging.getLogger("app")
@@ -201,6 +201,7 @@ class Catalogue:
     parents: dict[str, list[str]]
     precomputed_paths: dict[str, list[list[str]]] | None
     serial_index: list[tuple[bool, tuple[tuple[int | None, int | None], ...]]]
+    machine_loose: dict[str, list[str]]       # loose_key -> machine part numbers (9.4)
 
     def paths(self, x: str) -> list[list[str]]:
         """(8.7) Every root-to-x path, sorted. Precomputed, or computed now (no cache)."""
@@ -315,6 +316,10 @@ def assemble(edges: Graph, master: dict[str, dict[str, str]], service: dict[str,
     }
     log.info("catalogue built: %s; %d cycle edge(s) removed", counts, len(removed))
 
+    machine_loose: dict[str, list[str]] = {}
+    for x in sorted(part_info):
+        machine_loose.setdefault(loose_key(x), []).append(x)
+
     return Catalogue(
         root=root,
         part_info=part_info,
@@ -323,6 +328,7 @@ def assemble(edges: Graph, master: dict[str, dict[str, str]], service: dict[str,
         parents=parents,
         precomputed_paths=precomputed,
         serial_index=serial_index,
+        machine_loose=machine_loose,
     )
 
 
