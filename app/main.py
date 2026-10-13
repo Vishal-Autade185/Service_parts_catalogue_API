@@ -63,6 +63,24 @@ PartNumber = Annotated[
     PathParam(description="Encode `#` as `%23` and `/` as `%2F`.", examples=["AS-40209"]),
 ]
 
+_default_openapi = app.openapi
+
+
+def openapi_without_422() -> dict:
+    """FastAPI lists a 422 for every endpoint with a parameter, but plain `str` path parameters
+    never fail validation here (unknown parts are 404, bad serials 400), so drop it from the docs."""
+    if app.openapi_schema is None:
+        schema = _default_openapi()
+        for operations in schema["paths"].values():
+            for operation in operations.values():
+                operation["responses"].pop("422", None)
+        for name in ("HTTPValidationError", "ValidationError"):
+            schema.get("components", {}).get("schemas", {}).pop(name, None)
+    return app.openapi_schema
+
+
+app.openapi = openapi_without_422
+
 
 @app.exception_handler(Exception)
 async def unhandled(request: Request, exc: Exception) -> JSONResponse:

@@ -5,9 +5,12 @@ Descriptions and examples are documentation only (/docs); examples are real valu
 Field order is the JSON field order."""
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
+
+# Pydantic evaluates these annotations at runtime, so `Optional[str]` rather than `str | None`
+# (the latter fails on Python 3.9 even with `from __future__ import annotations`).
 
 
 class PartChild(BaseModel):
@@ -17,9 +20,9 @@ class PartChild(BaseModel):
 
 class PartInfoResponse(BaseModel):
     part_number: str = Field(description="Canonical (BOM) spelling.", examples=["AS-40209"])
-    description: str | None = Field(description="From the latest revision; null if `missing`.",
-                                    examples=["Infeed conveyor sub-assembly 2.5 insert holder"])
-    revision: str | None = Field(description="Latest revision; null if `missing`.", examples=["A"])
+    description: Optional[str] = Field(description="From the latest revision; null if `missing`.",
+                                       examples=["Infeed conveyor sub-assembly 2.5 insert holder"])
+    revision: Optional[str] = Field(description="Latest revision; null if `missing`.", examples=["A"])
     status: Literal["ready", "missing", "not_replaceable"] = Field(
         description="`ready`: in parts master and marked Y. `not_replaceable`: in parts master, not marked Y. "
                     "`missing`: not in parts master.",

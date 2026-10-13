@@ -56,6 +56,20 @@ def test_page_served(client):
     assert "Service Parts Catalogue" in r.text
 
 
+def test_docs_list_only_real_responses(client):          # decision 25: no 422 in the docs
+    schema = client.get("/openapi.json").json()
+    codes = {path: sorted(ops["get"]["responses"]) for path, ops in schema["paths"].items()}
+    assert codes == {
+        "/health": ["200", "500"],
+        "/api/validation": ["200", "500"],
+        "/api/parts/{part_number}/paths": ["200", "404", "500"],
+        "/api/parts/{part_number}": ["200", "404", "500"],
+        "/api/serial/{serial}": ["200", "400", "500"],
+    }
+    assert "HTTPValidationError" not in schema["components"]["schemas"]
+    assert client.get("/docs").status_code == 200
+
+
 # ---- parts ----------------------------------------------------------------------------
 
 
