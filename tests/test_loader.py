@@ -7,12 +7,14 @@ from app.loader import (
     INVALID,
     StartupError,
     canon_header,
+    load_all,
     norm_pn,
     parse_flag,
     parse_int,
     read_csv,
     rev_key,
 )
+from models import ServiceDecision
 from tests.conftest import MASTER_HEADER, make_data, write_csv
 
 MASTER_REQUIRED = ("part_number", "revision", "description")
@@ -230,3 +232,180 @@ def test_make_data_writes_three_readable_files(tmp_path):
     assert read_csv(d / "parts_master.csv", MASTER_REQUIRED)[0].values["revision"] == "B"
     svc = read_csv(d / "service_parts.csv", ("part_number", "field_replaceable", "serial_from", "serial_to"))
     assert svc[0].values["field_replaceable"] == "Y"
+
+
+# ---------------------------------------------------------------------------
+# 12.3 Validation and conflicts
+# ---------------------------------------------------------------------------
+
+
+def _load(tmp_path, bom=(), master=(), service=()):
+    return load_all(make_data(tmp_path, bom, master, service))
+
+
+def test_invalid_bom_rows_skipped(tmp_path):
+    edges, _, _ = _load(tmp_path, bom=[
+        ("", "B", 1),            # blank parent
+        ("A", " ", 1),           # blank child
+        ("A", "a", 1),           # parent == child after norm_pn
+        ("A", "C", 0),           # zero
+        ("A", "D", -2),          # negative
+        ("A", "E", "2.5"),       # not whole
+        ("A", "F", ""),          # blank
+        ("A", "G", "abc"),       # garbage
+        ("A", "H", "3.0"),       # valid
+        ("A", "I", "1,000"),     # valid
+    ])
+    assert edges == {"A": {"H": 3, "I": 1000}}
+
+
+def test_validate_before_dedup(tmp_path):
+    edges, _, _ = _load(tmp_path, bom=[("A", "B", "abc"), ("A", "B", 4)])
+    assert edges == {"A": {"B": 4}}
+
+
+@pytest.mark.parametrize(
+    "qtys, expected",
+    [
+        ([2, 3, 3], 3),          # most common
+        ([2, 3], 2),             # tie -> first
+        ([4, 4, 4], 4),          # all the same
+        ([5, 2, 3, 3, 2], 2),    # tie between 2 and 3 -> the tied value seen first
+    ],
+)
+def test_conflicting_quantities(tmp_path, qtys, expected):
+    edges, _, _ = _load(tmp_path, bom=[("A", "B", q) for q in qtys])
+    assert edges == {"A": {"B": expected}}
+
+
+def test_bom_part_numbers_normalised(tmp_path):
+    edges, _, _ = _load(tmp_path, bom=[(" as-1 ", "fa\N{EN DASH}9", 2), ("AS-1", "FA-9", 2)])
+    assert edges == {"AS-1": {"FA-9": 2}}
+
+
+@pytest.mark.parametrize(
+    "revs, expected",
+    [
+        (["A", "B"], "B"),
+        (["B", "AA"], "AA"),
+        (["", "A"], "A"),
+        (["b", "a"], "B"),       # normalised to upper case
+    ],
+)
+def test_revision_selection(tmp_path, revs, expected):
+    master = [("P-1", r, f"desc {i}") for i, r in enumerate(revs)]
+    _, m, _ = _load(tmp_path, bom=[("R", "P-1", 1)], master=master)
+    assert m["P-1"]["revision"] == expected
+
+
+def test_revision_tie_keeps_first_row(tmp_path):
+    _, m, _ = _load(tmp_path, bom=[("R", "P-1", 1)], master=[("P-1", "B", "first"), ("P-1", "B", "second")])
+    assert m["P-1"] == {"revision": "B", "description": "first"}
+
+
+def test_master_blank_pn_skipped_and_blank_fields_kept(tmp_path):
+    _, m, _ = _load(tmp_path, bom=[("R", "P-1", 1)], master=[("", "A", "no pn"), ("P-1", "", "  ")])
+    assert m == {"P-1": {"revision": "", "description": ""}}
+
+
+@pytest.mark.parametrize(
+    "serial_from, serial_to, unrestricted, ranges",
+    [
+        ("", "", True, []),                      # blank / blank -> unrestricted
+        ("1000", "", False, [(1000, None)]),     # open upper bound
+        ("", "2000", False, [(None, 2000)]),     # open lower bound
+        ("1000", "2000", False, [(1000, 2000)]),
+        ("1500", "1500", False, [(1500, 1500)]),
+        ("1000.0", "2,000", False, [(1000, 2000)]),
+        ("2000", "1000", False, []),             # reversed -> invalid
+        ("abc", "", False, []),                  # invalid on one side
+        ("", "1e3", False, []),
+    ],
+)
+def test_service_range_table(tmp_path, serial_from, serial_to, unrestricted, ranges):
+    _, _, s = _load(tmp_path, service=[("P-1", "Y", serial_from, serial_to)])
+    assert s["P-1"] == ServiceDecision(replaceable=True, unrestricted=unrestricted, ranges=ranges)
+
+
+def test_service_decisions(tmp_path):
+    _, _, s = _load(tmp_path, service=[
+        ("ONLY-N", "N", "", ""),
+        ("UNKNOWN", "TBD", "", ""),
+        ("MIXED", "Y", "", ""),
+        ("MIXED", "N", "", ""),
+        ("MIXED-UNKNOWN", "Yes", "", ""),
+        ("MIXED-UNKNOWN", "?", "", ""),
+        ("MULTI-Y", "Y", "100", "200"),
+        ("MULTI-Y", "true", "", ""),
+        ("MULTI-Y", "1", "500", ""),
+        ("ALL-INVALID", "Y", "9", "1"),
+        ("ALL-INVALID", "Y", "x", ""),
+    ])
+    assert "NOROWS" not in s
+    assert s["ONLY-N"] == ServiceDecision()
+    assert s["UNKNOWN"] == ServiceDecision()
+    assert s["MIXED"] == ServiceDecision()                   # N wins
+    assert s["MIXED-UNKNOWN"] == ServiceDecision()           # unknown counts as N
+    assert s["MULTI-Y"] == ServiceDecision(True, True, [(100, 200), (500, None)])
+    assert s["ALL-INVALID"] == ServiceDecision(True, False, [])   # ready, but fits no serial
+
+
+def test_master_alias_resolved_to_bom_spelling(tmp_path):
+    _, m, s = _load(
+        tmp_path,
+        bom=[("AS-40000", "AS-40003", 1)],
+        master=[("AS40003", "A", "Frame")],
+        service=[("AS_40003", "Y", "", "")],
+    )
+    assert m == {"AS-40003": {"revision": "A", "description": "Frame"}}
+    assert s == {"AS-40003": ServiceDecision(True, True, [])}
+
+
+def test_alias_not_merged_when_two_bom_spellings_share_loose_key(tmp_path):
+    _, m, _ = _load(
+        tmp_path,
+        bom=[("R", "GF-1", 1), ("R", "GF#1", 1)],
+        master=[("GF1", "A", "ambiguous")],
+    )
+    assert m == {"GF1": {"revision": "A", "description": "ambiguous"}}
+
+
+def test_exact_master_entry_beats_alias(tmp_path):
+    _, m, _ = _load(
+        tmp_path,
+        bom=[("R", "AS-3", 1)],
+        master=[("AS3", "Z", "alias"), ("AS-3", "A", "exact")],
+    )
+    assert m == {"AS-3": {"revision": "A", "description": "exact"}}
+
+
+def test_two_master_aliases_merged_and_revision_reselected(tmp_path):
+    _, m, _ = _load(
+        tmp_path,
+        bom=[("R", "AS-3", 1)],
+        master=[("AS3", "A", "older"), ("AS_3", "B", "newer"), ("AS/3", "B", "newer, later row")],
+    )
+    assert m == {"AS-3": {"revision": "B", "description": "newer"}}
+
+
+def test_service_alias_rows_merged_with_exact_rows(tmp_path):
+    _, _, s = _load(
+        tmp_path,
+        bom=[("R", "AS-3", 1)],
+        service=[("AS-3", "Y", "", ""), ("AS3", "N", "", "")],
+    )
+    assert s == {"AS-3": ServiceDecision()}                  # merged, N wins
+
+
+def test_repeated_header_row_fails_validation(tmp_path):
+    d = make_data(tmp_path, bom_rows=[("A", "B", 1)])
+    with open(d / "bom.csv", "a", encoding="utf-8") as f:
+        f.write("parent_pn,child_pn,quantity\nA,C,2\n")
+    edges, _, _ = load_all(d)
+    assert edges == {"A": {"B": 1, "C": 2}}
+
+
+def test_load_all_on_visible_data_does_not_crash():
+    from app.config import DATA_DIR
+    edges, master, service = load_all(DATA_DIR)
+    assert edges and master and service
