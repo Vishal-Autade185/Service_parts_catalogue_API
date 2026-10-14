@@ -129,9 +129,12 @@ def test_corruption_leaves_answers_unchanged(tmp_path, baseline, name):
     assert snapshot(build(write_tables(tmp_path, tables), ROOT)) == baseline
 
 
-def test_lf_line_endings(tmp_path, baseline):
-    assert b"\r\n" in (DATA_DIR / "bom.csv").read_bytes()          # visible data is CRLF
-    assert snapshot(build(write_tables(tmp_path, read_tables(), newline="\n"), ROOT)) == baseline
+def test_flipped_line_endings(tmp_path, baseline):
+    # Git checks the CSVs out as CRLF on Windows and LF elsewhere: write the other one.
+    crlf = b"\r\n" in (DATA_DIR / "bom.csv").read_bytes()
+    flipped = write_tables(tmp_path, read_tables(), newline="\n" if crlf else "\r\n")
+    assert (b"\r\n" in (flipped / "bom.csv").read_bytes()) != crlf
+    assert snapshot(build(flipped, ROOT)) == baseline
 
 
 def test_cp1252_encoding(tmp_path, baseline):
