@@ -231,6 +231,20 @@ def paths_to(x: str, root: str, parents: dict[str, list[str]]) -> list[list[str]
     return out
 
 
+def all_paths(order: list[str], nodes: set[str], g: Graph, root: str) -> dict[str, list[list[str]]]:
+    """Every part's paths in one top-down pass: a child's paths are each placed parent's paths plus
+    the child. Same result as paths_to for every part, but linear in the size of the output
+    (paths_to copies the growing path at every step, which is slow for very deep BOMs)."""
+    paths: dict[str, list[list[str]]] = {n: [] for n in nodes}
+    paths[root] = [[root]]
+    for n in order:                                  # topological order: parents before children
+        for c in g.get(n, {}):
+            paths[c].extend(p + [c] for p in paths[n])
+    for ps in paths.values():
+        ps.sort()
+    return paths
+
+
 def _status(x: str, master: dict, service: dict[str, ServiceDecision]) -> str:
     if x not in master:
         return "missing"
@@ -278,7 +292,7 @@ def assemble(edges: Graph, master: dict[str, dict[str, str]], service: dict[str,
             log.warning("part %s has %d paths", n, count[n])
     precomputed = None
     if sum(count.values()) <= config.PATHS_PRECOMPUTE_LIMIT:
-        precomputed = {n: paths_to(n, root, parents) for n in nodes}
+        precomputed = all_paths(order, nodes, g, root)
 
     # 8.8 + 8.10: part info, with safe defaults if anything fails
     part_info: dict[str, dict] = {}
