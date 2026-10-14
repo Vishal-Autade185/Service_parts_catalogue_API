@@ -118,6 +118,13 @@ Then run all tests:
 Expected: `403 passed, 1 skipped` (the skipped test is an optional 1-million-path stress test;
 run it with `RUN_SLOW=1`).
 
+## Documentation
+
+- [docs/DATA.md](docs/DATA.md): what I found in the data, the rule for each problem, and how I tested it
+- [docs/NOTES.md](docs/NOTES.md): decisions, what I cut, limitations and next steps
+- [docs/AI.md](docs/AI.md): AI tools used and what for
+- [docs/PRODUCT.md](docs/PRODUCT.md): the full specification the project was built from
+
 ## What it serves
 
 | URL | Answer |
